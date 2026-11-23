@@ -1,30 +1,59 @@
 {
-  "round": 1,
-  "timestamp": "2026-11-21T22:27:00+08:00",
-  "base_commit": "b047a120ea0a0b35c2a57ae804a66efd676b4c8d",
+  "round": 2,
+  "timestamp": "2026-11-23T10:10:00+08:00",
+  "base_commit": null,
+  "scope": "优化检查点确认流转，确保切换前后实际续采范围一致；受理凭据冻结、冲突不回改、换点责任交接、归档引用反查、同名任务隔离",
   "tests": [
     {
       "name": "python-compileall",
-      "command": "python3 -m compileall backend/",
+      "command": "python3 -m compileall backend/app",
       "exit_code": 0,
       "result": "passed",
-      "detail": "所有27个Python文件编译成功，无语法错误"
+      "detail": "后端全部 Python 文件编译成功，含新增 checkpoint_flow.py 与 resume_flow.py"
     },
     {
-      "name": "frontend-npm-install",
-      "command": "npm install",
+      "name": "checkpoint-flow-scenarios",
+      "command": "python3 -I scripts/verify_checkpoint_flow.py",
       "exit_code": 0,
       "result": "passed",
-      "detail": "51 packages added, 0 errors"
+      "detail": "服务层 52 项断言全过：首次读取前/读第一段后两个批准时点、近名任务隔离、草稿拦截、归档反查、交接兜底、凭据状态"
+    },
+    {
+      "name": "http-end-to-end",
+      "command": "python3 -I scripts/verify_http_flow.py",
+      "exit_code": 0,
+      "result": "passed",
+      "detail": "真实 uvicorn 服务 27 项 HTTP 断言全过：受理冻结、两段实读归属、跨任务换点拒绝、交接后继单、公布区间、引用反查"
     },
     {
       "name": "frontend-typecheck",
       "command": "npx vue-tsc --noEmit",
       "exit_code": 0,
       "result": "passed",
-      "detail": "TypeScript类型检查通过，无类型错误"
+      "detail": "TypeScript 类型检查通过，新增 ResumeFlowView 与 resume-flow API 无类型错误"
+    },
+    {
+      "name": "frontend-build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "result": "passed",
+      "detail": "vite 生产构建成功，37 个模块，dist 产物正常生成"
+    },
+    {
+      "name": "dev-server-smoke",
+      "command": "curl http://127.0.0.1:5197/resume-flow 与 /api/health",
+      "exit_code": 0,
+      "result": "passed",
+      "detail": "工作台页面 HTTP 200，/api 代理到后端 8017 健康检查通过"
     }
   ],
   "overall": "passed",
-  "fixes_applied": []
+  "key_invariants": [
+    "检查点按关联接入任务等值精确归属，同名前缀任务（订单接入任务A vs 订单接入任务A-备份链路）候选互不串用",
+    "只有已确认检查点进入候选；待确认草稿、已过期归档点一律排除",
+    "受理瞬间冻结检查点版本与起始Offset；受理后新批准断点不回改本轮，101-120 等已交区间始终有人负责",
+    "每个读取段记录分区、实读区间、采用检查点版本，并归属唯一受理单",
+    "换点走责任交接：旧单实读责任不移交、未实读部分显式兜底、自动开立后继单",
+    "检查点废弃仅改状态留痕，历史受理单/读取段/交接记录可永久反查"
+  ]
 }

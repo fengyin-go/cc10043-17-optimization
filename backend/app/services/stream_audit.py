@@ -57,7 +57,11 @@ class StreamAuditService(BaseModuleService):
         watermarks = store.rows("watermark_tracker")
         payloads = store.rows("payload_store")
         sinks = store.rows("data_sink")
-        has_checkpoint = any(source in str(c.get("关联接入任务", "")) for c in checkpoints)
+        # 检查点归属坚持等值精确匹配，避免同名前缀任务（如 A 与 A-备份链路）串用。
+        has_checkpoint = any(
+            str(c.get("关联接入任务", "")) == source and c.get("status") == "已确认"
+            for c in checkpoints
+        )
         has_watermark = any(source in str(w.get("数据源", "")) for w in watermarks)
         has_payload = any(source in str(p.get("采集批次", "")) for p in payloads)
         has_sink = any(source in str(s.get("配置名称", "")) for s in sinks)

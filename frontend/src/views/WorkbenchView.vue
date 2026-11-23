@@ -41,6 +41,9 @@
       <thead>
         <tr>
           <th v-for="column in meta.fields" :key="column">{{ column }}</th>
+          <th v-if="moduleKey === 'record_checkpoint'">版本</th>
+          <th v-if="moduleKey === 'record_checkpoint'">凭据状态与冲突</th>
+          <th v-if="moduleKey === 'record_checkpoint'">引用受理单</th>
           <th>当前状态</th>
           <th>可执行动作</th>
         </tr>
@@ -48,6 +51,22 @@
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)" :data-testid="`row-${row.id}`" :data-status="String(row.status)">
           <td v-for="column in meta.fields" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-if="moduleKey === 'record_checkpoint'">
+            {{ row.版本号 ? `V${row.版本号}` : '未占版' }}
+          </td>
+          <td v-if="moduleKey === 'record_checkpoint'">
+            <span class="badge" :class="credentialBadge(String(row.凭据状态))">{{ row.凭据状态 ?? '—' }}</span>
+            <div v-if="conflictHints(row).length" class="conflict-box">
+              <div v-for="hint in conflictHints(row)" :key="hint.受理单id">
+                与{{ hint.受理单号 }}区间{{ hint.重叠区间[0] }}-{{ hint.重叠区间[1] }}冲突：{{ hint.处置 }}
+              </div>
+            </div>
+          </td>
+          <td v-if="moduleKey === 'record_checkpoint'">
+            <button class="link" type="button" :data-testid="`refs-${row.id}`" @click="showReferences(row)">
+              {{ Number(row.引用受理单数 ?? 0) }} 张
+            </button>
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
@@ -63,12 +82,31 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="meta.fields.length + 2" class="empty-state">
+          <td :colspan="meta.fields.length + 2 + (moduleKey === 'record_checkpoint' ? 3 : 0)" class="empty-state">
             暂无{{ meta.name }}数据，可先登记{{ meta.entity }}
           </td>
         </tr>
       </tbody>
     </table>
+
+    <div v-if="referenceView" class="modal-backdrop" data-testid="reference-modal" @click.self="referenceView = null">
+      <div class="modal">
+        <h3>检查点 {{ referenceView.checkpoint.检查点值 }} 的引用留痕</h3>
+        <p class="hint">
+          当前状态：{{ referenceView.checkpoint.凭据状态 }}，
+          共 {{ referenceView.reference_count }} 张受理单引用（停用/归档后仍可反查）。
+        </p>
+        <div v-for="acc in referenceView.acceptances" :key="acc.id" class="handover-box">
+          <strong>{{ acc.受理单号 }}（{{ acc.状态 }}）</strong>
+          <div v-for="seg in acc.referring_segments" :key="seg.id">
+            分区{{ seg.分区 }} 实读 {{ seg.起始Offset }}-{{ seg.结束Offset }}，
+            采用 {{ seg.采用检查点值 }}/V{{ seg.采用版本号 }}
+          </div>
+        </div>
+        <p v-if="!referenceView.acceptances.length" class="empty-state">暂无受理单引用该检查点。</p>
+        <div class="page-actions"><button class="btn primary" type="button" @click="referenceView = null">关闭</button></div>
+      </div>
+    </div>
 
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
@@ -103,7 +141,8 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
-import type { EntryRow } from '@/data/types'
+import { fetchCheckpointReferences } from '@/api/resume-flow'
+import type { ConflictHint, EntryRow } from '@/data/types'
 
 const props = defineProps<{ moduleKey: string }>()
 const meta = moduleMeta(props.moduleKey)
@@ -115,6 +154,7 @@ const filterFields = meta.fields.slice(0, 3)
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
+const referenceView = ref<Awaited<ReturnType<typeof fetchCheckpointReferences>> | null>(null)
 const stats = computed(() => [
   { label: meta.metrics[0], value: total.value },
   { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
@@ -133,6 +173,25 @@ const statusSummary = computed(() =>
 function resetFilters() {
   filters.value = {}
   void reload()
+}
+
+function conflictHints(row: EntryRow): ConflictHint[] {
+  return Array.isArray(row.冲突提示) ? (row.冲突提示 as ConflictHint[]) : []
+}
+
+function credentialBadge(status: string) {
+  if (status.includes('在用')) return 'badge-blue'
+  if (status.includes('冲突')) return 'badge-amber'
+  if (status.includes('归档') || status.includes('不可用')) return 'badge-gray'
+  return 'badge-green'
+}
+
+async function showReferences(row: EntryRow) {
+  try {
+    referenceView.value = await fetchCheckpointReferences(Number(row.id))
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '引用反查失败'
+  }
 }
 
 async function exportRows() {

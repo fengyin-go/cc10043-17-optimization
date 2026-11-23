@@ -16,11 +16,60 @@
 │   └── vite.config.ts        dev server 配置（open: false）
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
+│   ├── app/routers/resume_flow.py 检查点确认流转/续采受理专用接口
+│   ├── app/services/checkpoint_flow.py 续采凭据冻结/受理/交接/公布/引用留痕
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
 │   ├── app/services/base.py     共享服务骨架
-│   └── app/store.py          内存数据仓库与示例数据
+│   └── app/store.py          内存数据仓库与示例数据（含续采留痕台账）
+├── scripts/
+│   ├── verify_checkpoint_flow.py 服务层场景验证（两个批准时点+隔离+反查）
+│   └── verify_http_flow.py       真实 HTTP 端到端验证
 ├── .gitignore
 └── docker-compose.yml
+```
+
+## 检查点确认流转（断点续采治理）
+
+围绕「切换前后实际续采范围一致」建立的硬约束，领域逻辑全部集中在
+`app/services/checkpoint_flow.py`，路由层不做业务判断：
+
+- **精确归属**：检查点只按「关联接入任务」等值匹配，同名前缀任务（如
+  `订单接入任务A` 与 `订单接入任务A-备份链路`）候选互不串用。
+- **候选门槛**：只有「已确认」检查点能进可用候选；待确认草稿、已过期归档点
+  一律排除，确认时分配任务内单调递增的版本号。
+- **凭据冻结**：续采受理瞬间冻结检查点版本与起始 Offset，开立受理单
+  （`resume_acceptance` 台账）。受理后再批准的新断点不回改本轮；与在途区间
+  冲突时只提示「候任下一轮」，已交给本轮的区间（如 101-120）始终有人负责。
+- **逐段留痕**：每次读取生成一条读取段（`resume_read_segment` 台账），记录
+  分区、实读区间、条数、采用检查点版本、凭据当前状态与归属受理单。
+- **换点交接**：旧受理单保留实读责任，未实读部分显式给出兜底区间并自动开立
+  采用新检查点的后继受理单（`checkpoint_handover` 台账），禁止跨任务换点。
+- **公布结算**：公布本轮实际覆盖区间、采用检查点与交接责任，并写入流审计。
+- **归档可查**：检查点废弃只改状态不删数据，可通过引用反查接口追到历史受理单、
+  读取段与交接记录。
+
+### 专用接口（先于通用资源路由注册）
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/api/record_checkpoint/eligible?task=` | 精确任务的已确认候选（草稿/近名任务不返回） |
+| GET | `/api/record_checkpoint/{id}/references` | 检查点引用反查（含已归档） |
+| GET | `/api/resume_policy/tasks/acceptances?task=` | 任务受理单及每段实读/交接明细 |
+| POST | `/api/resume_policy/accept` | 受理续采，冻结检查点版本与起点 |
+| POST | `/api/resume_policy/acceptances/{id}/read-segment` | 按冻结凭据读取下一段 |
+| POST | `/api/resume_policy/acceptances/{id}/handover` | 换点责任交接并开立后继单 |
+| POST | `/api/resume_policy/acceptances/{id}/publish` | 公布本轮实际覆盖区间 |
+| GET | `/api/resume_policy/acceptances/{id}` | 受理单详情 |
+
+前端在导航「检查点续采流转」（`/resume-flow`，`ResumeFlowView.vue`）提供候选、
+受理、逐段区间、交接与公布的可视化工作台；通用「记录检查点」列表额外展示
+凭据状态、冲突提示与引用受理单数。
+
+### 验证
+
+```bash
+python3 -I scripts/verify_checkpoint_flow.py   # 服务层 52 项场景断言
+python3 -I scripts/verify_http_flow.py         # 真实服务 27 项 HTTP 断言（需先起后端）
 ```
 
 ## 启动

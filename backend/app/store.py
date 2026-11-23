@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.seed import SEED_ROWS
+from app.seed import SEED_LEDGERS, SEED_ROWS
 
 
 class Store:
@@ -14,12 +14,29 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        # 续采流转留痕台账（受理单、读取段、换点交接）：不属于 20 个业务模块，
+        # 不进 overview 统计，仅由领域服务写入、专用接口查询。
+        self._ledgers: dict[str, list[dict[str, Any]]] = {
+            name: [dict(row) for row in rows] for name, rows in SEED_LEDGERS.items()
+        }
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
+
+    def ledger(self, name: str) -> list[dict[str, Any]]:
+        return self._ledgers.setdefault(name, [])
+
+    def reset_to_seed(self) -> None:
+        """把业务表与留痕台账恢复成种子数据（供场景验证与测试隔离使用）。"""
+        self._tables = {
+            name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
+        }
+        self._ledgers = {
+            name: [dict(row) for row in rows] for name, rows in SEED_LEDGERS.items()
+        }
 
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):
